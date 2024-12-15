@@ -157,31 +157,35 @@ esac
 # Generer og send sletterapport
 wipe_report=$(jq -n \
     --argjson wipeJobId 0 \
-    --arg startTime "$(date +'%Y-%m-%dT%H:%M:%S')" \
-    --arg endTime "$(date +'%Y-%m-%dT%H:%M:%S')" \
+    --arg startTime "$(date -u +'%Y-%m-%dT%H:%M:%SZ')" \
+    --arg endTime "$(date -u +'%Y-%m-%dT%H:%M:%SZ')" \
     --arg status "Completed" \
     --arg diskType "$disk_type" \
     --argjson capacity "$capacity" \
     --arg serialNumber "$serial_number" \
     --arg manufacturer "$manufacturer" \
     --arg wipeMethodName "$method_name" \
-    --argjson overwritePasses $method_overwrite_passes \
+    --argjson overwritePasses "$method_overwrite_passes" \
     --arg performedBy "default-user-id" \
     '{wipeJobId: $wipeJobId, startTime: $startTime, endTime: $endTime, status: $status, diskType: $diskType, capacity: $capacity, serialNumber: $serialNumber, manufacturer: $manufacturer, wipeMethodName: $wipeMethodName, overwritePasses: $overwritePasses, performedBy: $performedBy}')
 
 echo "Debug Wipe Report JSON: $wipe_report"
 
 REPORT_API="http://192.168.32.15:5002/api/wipeReports"
-response=$(curl -s -X POST "$REPORT_API" \
+response=$(curl -s -w "\n%{http_code}" -X POST "$REPORT_API" \
     -H "Content-Type: application/json" \
     -d "$wipe_report")
 
-echo "Server Response: $response"
+# Opdel responsen i body og HTTP-statuskode
+http_status=$(echo "$response" | tail -n1)
+server_response=$(echo "$response" | head -n -1)
 
-if [[ "$response" == "200" || "$response" == "201" ]]; then
-    log "Sletterapport sendt med succes."
-    echo "Sletterapport sendt med succes!"
+echo "Server Response: $server_response"
+
+if [[ "$http_status" -ne 200 && "$http_status" -ne 201 ]]; then
+    log "Fejl ved afsendelse af sletterapport. HTTP status: $http_status. Respons: $server_response"
+    echo "Fejl ved afsendelse af sletterapport. HTTP status: $http_status. Respons: $server_response"
 else
-    log "Fejl ved afsendelse af sletterapport. HTTP status: $response."
-    echo "Fejl ved afsendelse af sletterapport. HTTP status: $response."
+    log "Sletterapport sendt med succes: $server_response"
+    echo "Sletterapport sendt med succes!"
 fi
