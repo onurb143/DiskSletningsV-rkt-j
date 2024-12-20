@@ -36,19 +36,45 @@ log "Diskoplysninger aflæst."
 serial_number=$(echo "$smartctl_info" | grep "Serial Number" | awk -F: '{print $2}' | xargs)
 serial_number=${serial_number:-"UNKNOWN"}
 
-model=$(echo "$smartctl_info" | grep "Device Model" | awk -F: '{print $2}' | xargs)
-model=${model:-"UNKNOWN"}
-
 manufacturer=$(lsblk -no VENDOR "$disk_path" | xargs)
 manufacturer=${manufacturer:-"UNKNOWN"}
 
 capacity=$(lsblk -bno SIZE "$disk_path" | awk '{print $1 / 1024 / 1024 / 1024}' | cut -d. -f1)
 disk_type=$(echo "$smartctl_info" | grep "Rotation Rate" | grep -q "Solid State" && echo "SSD" || echo "HDD")
 
+# Kontroller, om disken allerede findes i databasen
+log "Kontrollerer, om disken allerede findes i databasen..."
+DISK_API="http://192.168.32.15:5002/api/disks"
+disk_check_response=$(curl -s -X GET "$DISK_API?serialNumber=$serial_number")
+
+if [[ "$disk_check_response" == *"$serial_number"* ]]; then
+    log "Disken med serienummer $serial_number findes allerede i databasen. Ingen tilføjelse nødvendig."
+else
+    # Tilføj disken til databasen
+    log "Tilføjer disken til databasen..."
+    disk_payload=$(jq -n \
+        --arg serialNumber "$serial_number" \
+        --argjson capacity "$capacity" \
+        --arg type "$disk_type" \
+        --arg manufacturer "$manufacturer" \
+        --arg path "$disk_path" \
+        --arg status "Available" \
+        '{SerialNumber: $serialNumber, Capacity: $capacity, Type: $type, Manufacturer: $manufacturer, Path: $path, Status: $status}')
+
+    disk_response=$(curl -s -w "\n%{http_code}" -X POST "$DISK_API" -H "Content-Type: application/json" -d "$disk_payload")
+    disk_http_status=$(echo "$disk_response" | tail -n1)
+
+    if [[ "$disk_http_status" -ne 200 && "$disk_http_status" -ne 201 ]]; then
+        log "Fejl ved tilføjelse af disken til databasen. HTTP status: $disk_http_status."
+        echo "Fejl ved tilføjelse af disken til databasen."
+        exit 1
+    fi
+    log "Disken blev tilføjet til databasen med succes."
+fi
+
 # Udskriv diskoplysninger
 echo "Diskinformationer fundet:"
 echo "Sti: $disk_path"
-echo "Model: $model"
 echo "Serienummer: $serial_number"
 echo "Kapacitet: ${capacity} GB"
 echo "Type: $disk_type"
