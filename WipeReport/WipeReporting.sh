@@ -6,16 +6,26 @@ log() {
     echo "$(date +'%Y-%m-%d %H:%M:%S') - $1" | tee -a "$log_file"
 }
 
-# Find og vis tilgængelige diske
-log "Finder tilgængelige diske..."
+# Find bootdisken
+boot_disk=$(findmnt -n -o SOURCE / | sed 's/[0-9]*$//')
+log "Bootdisken er identificeret som $boot_disk. Denne disk vil ikke blive vist som en mulighed for sletning."
+
+# Find og vis tilgængelige diske undtagen bootdisken
+log "Finder tilgængelige diske (ekskluderer bootdisken)..."
 echo "Tilgængelige diske:"
-lsblk -do NAME,SIZE,MODEL,SERIAL,VENDOR
+lsblk -ndo NAME,SIZE,MODEL,SERIAL | grep -v "$(basename "$boot_disk")"
 
 # Brugeren vælger en disk
-read -p "Vælg disk (indtast diskens navn, f.eks. sda): " selected_disk
+read -p "Vælg disk (indtast diskens navn, f.eks. sdb): " selected_disk
 disk_path="/dev/$selected_disk"
 
-# Kontrollér, om disken findes
+# Kontrollér, om disken findes og ikke er bootdisken
+if [[ "$disk_path" == "$boot_disk" ]]; then
+    log "Valgt disk er bootdisken ($disk_path), og kan ikke slettes."
+    echo "Du kan ikke slette bootdisken ($disk_path). Vælg en anden disk."
+    exit 1
+fi
+
 if [[ ! -b "$disk_path" ]]; then
     log "Disken $disk_path blev ikke fundet."
     echo "Disken $disk_path blev ikke fundet. Kontrollér valget og prøv igen."
@@ -115,7 +125,12 @@ case $selected_method in
     4) shred -n 35 -v "$disk_path" ;;
     5) shred -n 3 -v "$disk_path" ;;
     6) shred -n 1 -z -v "$disk_path" ;;
-    10) dd if=/dev/zero of="$disk_path" bs=1M status=progress ;;
+    7) shred -n 7 -v "$disk_path" ;; # Schneier Method
+    8) shred -n 3 -v "$disk_path" ;; # HMG IS5 (Enhanced)
+    9) shred -n 35 -v "$disk_path" ;; # Peter Gutmann's Method
+    10) dd if=/dev/zero of="$disk_path" bs=1M status=progress ;; # Single Pass Zeroing
+    11) shred -n 4 -v "$disk_path" ;; # DoD 5220.22-M (E)
+    12) dd if=/dev/zero of="$disk_path" bs=1M status=progress ;; # ISO/IEC 27040
     *) log "Slettemetoden er ikke implementeret."; exit 1 ;;
 esac
 
@@ -134,8 +149,8 @@ wipe_report=$(jq -n \
     --arg manufacturer "$manufacturer" \
     --arg wipeMethodName "$method_name" \
     '{startTime: $startTime, endTime: $endTime, status: $status, diskType: $diskType, capacity: $capacity, serialNumber: $serialNumber, manufacturer: $manufacturer, wipeMethodName: $wipeMethodName}')
-
-REPORT_API="http://192.168.32.15:5002/api/wipeReports"
+    
+    REPORT_API="http://192.168.32.15:5002/api/wipeReports"
 response=$(curl -s -w "\n%{http_code}" -X POST "$REPORT_API" -H "Content-Type: application/json" -d "$wipe_report")
 
 http_status=$(echo "$response" | tail -n1)
@@ -150,3 +165,5 @@ else
     log "Sletterapport sendt med succes."
     echo "Sletterapport sendt med succes!"
 fi
+
+exit 0
